@@ -1,29 +1,25 @@
-# No-Code Sales Forecasting & BI Dashboard
-# This app allows users to upload sales data, perform EDA, train models, and visualize results without writing code.
-# Built with Streamlit, Pandas, Plotly, and Scikit-learn.
-
-# import necessary libraries
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 
-from ydata_profiling import ProfileReport
-from streamlit_pandas_profiling import st_profile_report
-
+import sweetviz as sv
+import tempfile
+import os
 
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
-from prophet import Prophet
 from sklearn.metrics import mean_absolute_error, r2_score
 import joblib
-import io
 
+# Prophet (for time series forecasting)
+try:
+    from prophet import Prophet
+except ImportError:
+    Prophet = None
 
-# Set up the Streamlit app
 st.set_page_config(page_title="No-Code Sales Forecast & BI", layout="wide")
 st.title("No-Code Sales Forecasting & BI Dashboard App")
 
@@ -38,10 +34,15 @@ else:
     st.info("Upload a CSV to get started.")
     st.stop()
 
-# --- Auto EDA ---
-if st.sidebar.button("Run Auto EDA"):
-    profile = ProfileReport(df, title="Pandas Profiling Report", explorative=True)
-    st_profile_report(profile)
+# --- Auto EDA with Sweetviz ---
+if st.sidebar.button("Run Auto EDA (Sweetviz)"):
+    report = sv.analyze(df)
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.html') as tmp:
+        report.show_html(tmp.name)
+        with open(tmp.name, "r", encoding="utf-8") as f:
+            html_content = f.read()
+        st.components.v1.html(html_content, height=800, scrolling=True)
+        os.remove(tmp.name)
 
 # --- Data Cleaning ---
 st.sidebar.header("Data Cleaning")
@@ -91,21 +92,25 @@ if st.sidebar.button("Train Model"):
 
     # Save model
     joblib.dump(model, "trained_model.pkl")
-    st.download_button("Download Model", open("trained_model.pkl", "rb").read(), "trained_model.pkl", "application/octet-stream")
+    with open("trained_model.pkl", "rb") as f:
+        st.download_button("Download Model", f.read(), "trained_model.pkl", "application/octet-stream")
 
 # --- Prophet Forecast ---
 st.sidebar.markdown("---")
-if "Date" in df.columns or "Month" in df.columns:
-    date_col = st.sidebar.selectbox("Time Column (for Prophet)", [c for c in df.columns if "date" in c.lower() or "month" in c.lower()])
+if Prophet and (any("date" in c.lower() for c in df.columns) or any("month" in c.lower() for c in df.columns)):
+    time_cols = [c for c in df.columns if "date" in c.lower() or "month" in c.lower()]
+    date_col = st.sidebar.selectbox("Time Column (for Prophet)", time_cols)
     if st.sidebar.button("Run Prophet Forecast"):
         df_prophet = df[[date_col, target_col]].rename(columns={date_col:'ds', target_col:'y'})
         m = Prophet(yearly_seasonality=True)
         m.fit(df_prophet)
         future = m.make_future_dataframe(periods=6, freq='M')
         forecast = m.predict(future)
-        fig = m.plot(forecast)
-        st.pyplot(fig)
-        st.write(forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail())
+        st.write("Prophet Forecast (tail):", forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail())
+        fig = px.line(forecast, x='ds', y='yhat', title='Prophet Forecast')
+        st.plotly_chart(fig, use_container_width=True)
+else:
+    st.sidebar.info("To use Prophet, make sure you have a date column and Prophet installed.")
 
 # --- Dashboards ---
 st.header("Dashboards & Analytics")
