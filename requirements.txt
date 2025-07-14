@@ -1,0 +1,10 @@
+streamlit
+pandas
+scikit-learn
+matplotlib
+plotly
+prophet
+pandas-profiling
+sweetviz
+openpyxl
+joblib
