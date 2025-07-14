@@ -1,12 +1,15 @@
+# app.py
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import tempfile, os, io
 
+# --- EDA & Profiling ---
 import sweetviz as sv
-import tempfile
-import os
 
+# --- ML & Forecasting ---
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
@@ -14,173 +17,207 @@ from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
 import joblib
 
+# ARIMA
+from statsmodels.tsa.arima.model import ARIMA
 
+# LSTM
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from sklearn.preprocessing import MinMaxScaler
 
-# Prophet (for time series forecasting)
-try:
-    from prophet import Prophet
-except ImportError:
-    Prophet = None
+st.set_page_config(page_title="Advanced Forecast & BI App", layout="wide")
+st.title("Advanced Forecasting & BI Dashboard App")
 
-# --- Streamlit App Configuration ---
-st.set_page_config(page_title="Forecast & BI App", layout="wide")
-st.title("Forecasting & BI Dashboard App")
-
-
-# --- Data Overview ---
-st.title("Simple Data Explorer")
-
-# Load data
-st.sidebar.header("Data Upload")
+# --- Sidebar: Data Upload & Cleaning ---
+st.sidebar.header("1. Upload & Clean Data")
 data_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
-
-if data_file is not None:
-    df = pd.read_csv(data_file)
-    st.sidebar.success("Sample Data loaded successfully!")
-    st.header("Manual EDA: Data Overview")
-
-    # Show shape and datatypes
-    st.write("**Shape:**", df.shape)
-    st.write("**Columns:**", list(df.columns))
-    st.write("**Data Types:**")
-    st.write(df.dtypes)
-
-    # Show summary statistics
-    st.subheader("Summary Statistics")
-    st.write(df.describe(include='all').T)
-
-    # Missing values
-    st.subheader("Missing Values")
-    missing = df.isnull().sum()
-    missing_percent = (missing / len(df)) * 100
-    missing_table = pd.DataFrame({'Missing': missing, 'Percent': missing_percent.round(2)})
-    st.write(missing_table[missing_table['Missing'] > 0])
-
-    # Value counts for categorical columns
-    st.subheader("Categorical Value Counts")
-    cat_cols = df.select_dtypes(include=['object', 'category']).columns
-    for col in cat_cols:
-        st.write(f"**{col}** value counts:")
-        st.write(df[col].value_counts())
-
-    # Outlier detection (IQR method) for numeric columns
-    st.subheader("Outlier Detection (IQR)")
-    num_cols = df.select_dtypes(include=np.number).columns
-    outlier_summary = {}
-    for col in num_cols:
-        Q1 = df[col].quantile(0.25)
-        Q3 = df[col].quantile(0.75)
-        IQR = Q3 - Q1
-        lower = Q1 - 1.5 * IQR
-        upper = Q3 + 1.5 * IQR
-        outliers = df[(df[col] < lower) | (df[col] > upper)]
-        outlier_summary[col] = len(outliers)
-    outlier_df = pd.DataFrame.from_dict(outlier_summary, orient='index', columns=['Outlier Count'])
-    st.write(outlier_df)
-
-    # Correlation heatmap (if more than 1 numeric col)
-    if len(num_cols) > 1:
-        st.subheader("Correlation Heatmap")
-        fig = px.imshow(df[num_cols].corr(), text_auto=True, aspect='auto', color_continuous_scale='RdBu')
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Distribution plots
-    st.subheader("Distribution Plots")
-    for col in num_cols:
-        fig = px.histogram(df, x=col, nbins=30, title=f'Distribution of {col}')
-        st.plotly_chart(fig, use_container_width=True)
-        fig_box = px.box(df, y=col, title=f'Boxplot of {col}')
-        st.plotly_chart(fig_box, use_container_width=True)
-else:
+if not data_file:
     st.info("Upload a CSV to begin.")
     st.stop()
 
-# --- Auto EDA with Sweetviz ---
+df = pd.read_csv(data_file)
+st.sidebar.success("Data loaded!")
+
+# Drop missing if desired
+if st.sidebar.checkbox("Drop rows with missing values?", value=True):
+    df = df.dropna()
+
+# Show sample
+st.subheader("Sample Data")
+st.dataframe(df.head())
+
+# --- Manual EDA ---
+st.subheader("Manual EDA")
+st.write("**Shape:**", df.shape)
+st.write("**Dtypes:**"); st.write(df.dtypes)
+st.write("**Summary stats:**")
+st.write(df.describe(include='all').T)
+
+# Missing
+miss = df.isna().sum()
+miss_pct = (miss/len(df)*100).round(2)
+st.write("**Missing values:**")
+st.write(pd.DataFrame({"count":miss, "%":miss_pct}).query("count>0"))
+
+# Categorical counts
+cat_cols = df.select_dtypes(["object","category"]).columns
+for c in cat_cols:
+    st.write(f"**{c}** value counts"); st.write(df[c].value_counts().head(10))
+
+# Numeric distributions & outliers
+num_cols = df.select_dtypes(np.number).columns
+for c in num_cols:
+    fig = px.histogram(df, x=c, nbins=30, title=f"Distribution of {c}")
+    st.plotly_chart(fig, use_container_width=True)
+    fig2 = px.box(df, y=c, title=f"Boxplot of {c}")
+    st.plotly_chart(fig2, use_container_width=True)
+
+# Correlation heatmap
+if len(num_cols)>1:
+    corr = df[num_cols].corr()
+    fig = px.imshow(corr, text_auto=True, color_continuous_scale="RdBu")
+    st.plotly_chart(fig, use_container_width=True)
+
+# --- Auto EDA ---
 if st.sidebar.button("Run Auto EDA (Sweetviz)"):
     report = sv.analyze(df)
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.html') as tmp:
-        report.show_html(tmp.name)
-        with open(tmp.name, "r", encoding="utf-8") as f:
-            html_content = f.read()
-        st.components.v1.html(html_content, height=800, scrolling=True)
-        os.remove(tmp.name)
+    tmp = tempfile.NamedTemporaryFile(suffix=".html", delete=False)
+    report.show_html(tmp.name)
+    html = open(tmp.name,"r",encoding="utf-8").read()
+    st.components.v1.html(html, height=700, scrolling=True)
+    os.remove(tmp.name)
 
+# --- Cross-sectional ML ---
+st.sidebar.header("2. Cross-Sectional ML")
+cols = list(df.columns)
+target = st.sidebar.selectbox("Target column", cols, index=len(cols)-1)
+features = st.sidebar.multiselect("Feature columns", [c for c in cols if c!=target], default=[c for c in cols if c!=target])
+if features:
+    X = pd.get_dummies(df[features])
+    y = df[target]
+    X_train, X_test, y_train, y_test = train_test_split(X,y,test_size=0.2,random_state=42)
+    model_choice = st.sidebar.radio("Model", ["RandomForest","LinearRegression","XGBoost"])
+    if st.sidebar.button("Train Cross-Sectional Model"):
+        if model_choice=="RandomForest":
+            m = RandomForestRegressor(n_estimators=100, random_state=42)
+        elif model_choice=="LinearRegression":
+            m = LinearRegression()
+        else:
+            m = XGBRegressor(n_estimators=100, random_state=42)
+        m.fit(X_train,y_train)
+        preds = m.predict(X_test)
+        st.success(f"{model_choice} MAE: {mean_absolute_error(y_test,preds):.2f} | R2: {r2_score(y_test,preds):.2f}")
+        # Download
+        out = X_test.copy()
+        out["Actual"]=y_test.values; out["Pred"]=preds
+        st.download_button("Download Predictions", out.to_csv(index=False).encode(), "preds.csv")
 
-# --- Data Cleaning ---
-st.sidebar.header("Data Cleaning")
-drop_na = st.sidebar.checkbox("Drop rows with missing values?", value=True)
-if drop_na:
-    df = df.dropna()
-    st.write(f"After dropping NA, shape: {df.shape}")
+        # Save model
+        joblib.dump(m,"cs_model.pkl")
+        with open("cs_model.pkl","rb") as f:
+            st.download_button("Download Model", f.read(), "cs_model.pkl")
 
-# --- Feature & Target Selection ---
-st.sidebar.header("ML Setup")
-all_cols = list(df.columns)
-target_col = st.sidebar.selectbox("Select Target Variable", all_cols, index=len(all_cols)-1)
-feature_cols = st.sidebar.multiselect("Select Features", [c for c in all_cols if c != target_col], default=[c for c in all_cols if c != target_col])
+# --- Time Series Forecasting ---
+st.sidebar.header("3. Time-Series Forecasting")
+ts_cols = [c for c in df.columns if "date" in c.lower() or "month" in c.lower()]
+if ts_cols:
+    date_col = st.sidebar.selectbox("Date column", ts_cols)
+    df_ts = df.copy()
+    df_ts[date_col] = pd.to_datetime(df_ts[date_col])
+    df_ts = df_ts.sort_values(date_col).set_index(date_col)
+    ts = df_ts[target]
 
-if len(feature_cols) == 0:
-    st.warning("Please select at least one feature.")
-    st.stop()
+    # ARIMA
+    if st.sidebar.checkbox("ARIMA"):
+        periods = st.sidebar.number_input("Periods to forecast", min_value=1, max_value=24, value=6)
+        order = st.sidebar.text_input("ARIMA order p,d,q", value="1,1,1")
+        if st.sidebar.button("Run ARIMA"):
+            p,d,q = map(int,order.split(","))
+            ar = ARIMA(ts, order=(p,d,q)).fit()
+            fc = ar.forecast(periods)
+            st.write("ARIMA forecast:")
+            st.write(fc)
+            fig = px.line(x=ts.index, y=ts.values, labels={"x":date_col,"y":target}, title="ARIMA: Historical + Forecast")
+            idx = pd.date_range(ts.index[-1], periods=periods+1, freq="M")[1:]
+            fig.add_scatter(x=idx, y=fc, mode="lines", name="Forecast")
+            st.plotly_chart(fig, use_container_width=True)
 
-# --- Encode Categoricals ---
-df_model = pd.get_dummies(df, columns=[c for c in feature_cols if df[c].dtype=='object'])
-X = df_model[[col for col in df_model.columns if col != target_col]]
-y = df_model[target_col]
+    # LSTM
+    if st.sidebar.checkbox("LSTM"):
+        lag = st.sidebar.slider("LSTM lookback", 1, 12, 3)
+        epochs = st.sidebar.number_input("Epochs", 1, 200, 50)
+        if st.sidebar.button("Run LSTM"):
+            arr = ts.values.reshape(-1,1)
+            scaler = MinMaxScaler()
+            scaled = scaler.fit_transform(arr)
+            Xs, ys = [], []
+            for i in range(lag, len(scaled)):
+                Xs.append(scaled[i-lag:i,0])
+                ys.append(scaled[i,0])
+            Xs, ys = np.array(Xs), np.array(ys)
+            Xs = Xs.reshape((Xs.shape[0], Xs.shape[1], 1))
+            split = int(0.8*len(Xs))
+            X_train, X_test = Xs[:split], Xs[split:]
+            y_train, y_test = ys[:split], ys[split:]
+            model = Sequential([LSTM(50, input_shape=(lag,1)), Dense(1)])
+            model.compile("adam","mse")
+            model.fit(X_train,y_train,epochs=epochs,verbose=0)
+            # Forecast next periods
+            last_seq = scaled[-lag:].reshape(1,lag,1)
+            preds = []
+            for _ in range(periods):
+                next_ = model.predict(last_seq)[0,0]
+                preds.append(next_)
+                last_seq = np.roll(last_seq, -1)
+                last_seq[0,-1,0] = next_
+            preds = scaler.inverse_transform(np.array(preds).reshape(-1,1)).flatten()
+            idx = pd.date_range(ts.index[-1], periods=periods+1, freq="M")[1:]
+            st.write("LSTM forecast:")
+            st.write(pd.Series(preds,index=idx))
+            fig = px.line(x=ts.index, y=ts.values, labels={"x":date_col,"y":target}, title="LSTM: Historical + Forecast")
+            fig.add_scatter(x=idx, y=preds, mode="lines", name="Forecast")
+            st.plotly_chart(fig, use_container_width=True)
 
-# --- Train/Test Split ---
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # XGBoost TS
+    if st.sidebar.checkbox("XGBoost (lag features)"):
+        n_lags = st.sidebar.slider("Number of lag features", 1, 12, 3)
+        if st.sidebar.button("Run XGB-TS"):
+            df_lag = pd.DataFrame({target: ts})
+            for l in range(1, n_lags+1):
+                df_lag[f"lag_{l}"] = df_lag[target].shift(l)
+            df_lag = df_lag.dropna()
+            X = df_lag.drop(target,axis=1)
+            y = df_lag[target]
+            X_train, X_test, y_train, y_test = train_test_split(X,y,test_size=0.2,shuffle=False)
+            xgb = XGBRegressor(n_estimators=100)
+            xgb.fit(X_train, y_train)
+            y_pred = xgb.predict(X_test)
+            st.success(f"XGB-TS MAE: {mean_absolute_error(y_test,y_pred):.2f}")
+            # iterative forecast
+            last_vals = df_lag[target].iloc[-n_lags:].values.tolist()
+            fc = []
+            for _ in range(periods):
+                inp = np.array(last_vals[-n_lags:]).reshape(1,-1)
+                nxt = xgb.predict(inp)[0]
+                fc.append(nxt)
+                last_vals.append(nxt)
+            idx = pd.date_range(ts.index[-1], periods=periods+1, freq="M")[1:]
+            st.write("XGB-TS forecast:")
+            st.write(pd.Series(fc,index=idx))
+            fig = px.line(x=ts.index, y=ts.values, labels={"x":date_col,"y":target}, title="XGB-TS: Historical + Forecast")
+            fig.add_scatter(x=idx, y=fc, mode="lines", name="Forecast")
+            st.plotly_chart(fig, use_container_width=True)
 
-# --- Model Selection ---
-model_choice = st.sidebar.radio("Choose Model", ["RandomForest", "LinearRegression", "XGBoost"])
-if model_choice == "RandomForest":
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-elif model_choice == "LinearRegression":
-    model = LinearRegression()
 else:
-    model = XGBRegressor(n_estimators=100, random_state=42)
-
-if st.sidebar.button("Train Model"):
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    st.success(f"Model trained! MAE: {mean_absolute_error(y_test, y_pred):.2f} | R2: {r2_score(y_test, y_pred):.2f}")
-
-    # Download predictions
-    pred_df = X_test.copy()
-    pred_df['Actual'] = y_test.values
-    pred_df['Predicted'] = y_pred
-    csv = pred_df.to_csv(index=False).encode()
-    st.download_button("Download Predictions", csv, "predictions.csv", "text/csv")
-
-    # Save model
-    joblib.dump(model, "trained_model.pkl")
-    with open("trained_model.pkl", "rb") as f:
-        st.download_button("Download Model", f.read(), "trained_model.pkl", "application/octet-stream")
-
-# --- Prophet Forecast ---
-st.sidebar.markdown("---")
-if Prophet and (any("date" in c.lower() for c in df.columns) or any("month" in c.lower() for c in df.columns)):
-    time_cols = [c for c in df.columns if "date" in c.lower() or "month" in c.lower()]
-    date_col = st.sidebar.selectbox("Time Column (for Prophet)", time_cols)
-    if st.sidebar.button("Run Prophet Forecast"):
-        df_prophet = df[[date_col, target_col]].rename(columns={date_col:'ds', target_col:'y'})
-        m = Prophet(yearly_seasonality=True)
-        m.fit(df_prophet)
-        future = m.make_future_dataframe(periods=6, freq='M')
-        forecast = m.predict(future)
-        st.write("Prophet Forecast (tail):", forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail())
-        fig = px.line(forecast, x='ds', y='yhat', title='Prophet Forecast')
-        st.plotly_chart(fig, use_container_width=True)
-else:
-    st.sidebar.info("To use Prophet, make sure you have a date column and Prophet installed.")
+    st.sidebar.info("No date column detected for time-series.")
 
 # --- Dashboards ---
-st.header("Dashboards & Analytics")
+st.header("4. Dashboards & Analytics")
 col1, col2 = st.columns(2)
-with col1:
-    fig1 = px.line(df, x=feature_cols[0], y=target_col, title=f"{target_col} over {feature_cols[0]}")
+if features:
+    fig1 = px.line(df, x=features[0], y=target, title=f"{target} vs {features[0]}")
     st.plotly_chart(fig1, use_container_width=True)
-with col2:
-    if len(feature_cols) > 1:
-        fig2 = px.bar(df, x=feature_cols[1], y=target_col, color=feature_cols[0], barmode='group', title=f"{target_col} by {feature_cols[1]}/{feature_cols[0]}")
-        st.plotly_chart(fig2, use_container_width=True)
+if len(features)>1:
+    fig2 = px.bar(df, x=features[1], y=target, color=features[0], barmode="group",
+                  title=f"{target} by {features[1]} & {features[0]}")
+    st.plotly_chart(fig2, use_container_width=True)
