@@ -14,51 +14,83 @@ from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
 import joblib
 
+
+
 # Prophet (for time series forecasting)
 try:
     from prophet import Prophet
 except ImportError:
     Prophet = None
 
-st.set_page_config(page_title="No-Code Sales Forecast & BI", layout="wide")
-st.title("No-Code Sales Forecasting & BI Dashboard App")
-
-# --- Upload CSV ---
-st.sidebar.header("Upload Sales Data (CSV)")
-data_file = st.sidebar.file_uploader("Choose a CSV file", type=["csv"])
-if data_file is not None:
-    df = pd.read_csv(data_file)
-    st.subheader("Sample Data")
-    st.dataframe(df.head())
-else:
-    st.info("Upload a CSV to get started.")
-    st.stop()
+# --- Streamlit App Configuration ---
+st.set_page_config(page_title="Forecast & BI App", layout="wide")
+st.title("Forecasting & BI Dashboard App")
 
 
 # --- Data Overview ---
 st.title("Simple Data Explorer")
 
+# Load data
+st.sidebar.header("Data Upload")
 data_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 if data_file is not None:
-    df = pd.read_csv(data_file)
-    st.subheader("Data Preview")
-    st.dataframe(df.head())
+    st.header("Manual EDA: Data Overview")
 
+    # Show shape and datatypes
     st.write("**Shape:**", df.shape)
-    st.write("**Columns:**", df.columns.tolist())
-    st.write("**Missing Values:**")
-    st.write(df.isnull().sum())
+    st.write("**Columns:**", list(df.columns))
+    st.write("**Data Types:**")
+    st.write(df.dtypes)
 
-    st.write("**Summary Statistics:**")
-    st.write(df.describe())
+    # Show summary statistics
+    st.subheader("Summary Statistics")
+    st.write(df.describe(include='all').T)
 
-    st.write("**Numeric Columns Histogram**")
-    num_cols = df.select_dtypes(include='number').columns
-    if len(num_cols) > 0:
-        col = st.selectbox("Select column", num_cols)
-        st.plotly_chart(px.histogram(df, x=col, title=f"Histogram of {col}"))
+    # Missing values
+    st.subheader("Missing Values")
+    missing = df.isnull().sum()
+    missing_percent = (missing / len(df)) * 100
+    missing_table = pd.DataFrame({'Missing': missing, 'Percent': missing_percent.round(2)})
+    st.write(missing_table[missing_table['Missing'] > 0])
+
+    # Value counts for categorical columns
+    st.subheader("Categorical Value Counts")
+    cat_cols = df.select_dtypes(include=['object', 'category']).columns
+    for col in cat_cols:
+        st.write(f"**{col}** value counts:")
+        st.write(df[col].value_counts())
+
+    # Outlier detection (IQR method) for numeric columns
+    st.subheader("Outlier Detection (IQR)")
+    num_cols = df.select_dtypes(include=np.number).columns
+    outlier_summary = {}
+    for col in num_cols:
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower = Q1 - 1.5 * IQR
+        upper = Q3 + 1.5 * IQR
+        outliers = df[(df[col] < lower) | (df[col] > upper)]
+        outlier_summary[col] = len(outliers)
+    outlier_df = pd.DataFrame.from_dict(outlier_summary, orient='index', columns=['Outlier Count'])
+    st.write(outlier_df)
+
+    # Correlation heatmap (if more than 1 numeric col)
+    if len(num_cols) > 1:
+        st.subheader("Correlation Heatmap")
+        fig = px.imshow(df[num_cols].corr(), text_auto=True, aspect='auto', color_continuous_scale='RdBu')
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Distribution plots
+    st.subheader("Distribution Plots")
+    for col in num_cols:
+        fig = px.histogram(df, x=col, nbins=30, title=f'Distribution of {col}')
+        st.plotly_chart(fig, use_container_width=True)
+        fig_box = px.box(df, y=col, title=f'Boxplot of {col}')
+        st.plotly_chart(fig_box, use_container_width=True)
 else:
     st.info("Upload a CSV to begin.")
+    st.stop()
 
 # --- Auto EDA with Sweetviz ---
 if st.sidebar.button("Run Auto EDA (Sweetviz)"):
