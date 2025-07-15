@@ -37,12 +37,12 @@ try:
 except ImportError:
     Sequential = LSTM = Dense = None
 
-# ── CACHING UTILITIES ──────────────────────────────────────────────────────────
-@st.cache_data
+# ── HELPERS ─────────────────────────────────────────────────────────────────────
+@st.cache_data(show_spinner=False)
 def load_data(uploaded_file):
     return pd.read_csv(uploaded_file)
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def run_sweetviz(df):
     report = sv.analyze(df)
     tmp = tempfile.NamedTemporaryFile(suffix=".html", delete=False)
@@ -51,7 +51,7 @@ def run_sweetviz(df):
     os.remove(tmp.name)
     return html
 
-@st.cache_resource
+# no caching here to avoid hashing errors
 def train_cs_model(_model, X_train, y_train):
     _model.fit(X_train, y_train)
     return _model
@@ -90,13 +90,11 @@ with tab_eda:
     st.subheader("Summary Statistics")
     st.write(df.describe(include="all").T)
 
-    # Missing values
     st.subheader("Missing Values")
     miss = df.isna().sum()
     miss_pct = (miss / len(df) * 100).round(2)
     st.write(pd.DataFrame({"count": miss, "%": miss_pct}).query("count > 0"))
 
-    # Categorical distributions
     cat_cols = df.select_dtypes(["object","category"]).columns
     if len(cat_cols):
         st.subheader("Categorical Value Counts")
@@ -104,7 +102,6 @@ with tab_eda:
             st.write(f"**{c}**")
             st.write(df[c].value_counts().head(10))
 
-    # Numeric distributions & outliers
     num_cols = df.select_dtypes(np.number).columns
     if len(num_cols):
         st.subheader("Numeric Distributions & Outliers")
@@ -119,7 +116,6 @@ with tab_eda:
         fig_corr = px.imshow(corr, text_auto=True, color_continuous_scale="RdBu")
         st.plotly_chart(fig_corr, use_container_width=True)
 
-    # Auto‐EDA via Sweetviz / ProfileReport
     st.header("Auto EDA")
     if st.button("▶ Run Sweetviz Report"):
         html = None
@@ -143,7 +139,7 @@ with tab_ml:
     st.header("Cross-Sectional ML")
     cols = df.columns.tolist()
     target = st.selectbox("Select target column", cols, index=len(cols)-1)
-    features = st.multiselect("Select feature columns", [c for c in cols if c!=target])
+    features = st.multiselect("Select feature columns", [c for c in cols if c != target])
 
     if features:
         num_feats = [c for c in features if np.issubdtype(df[c].dtype, np.number)]
@@ -165,9 +161,9 @@ with tab_ml:
 
         model_choice = st.radio("Choose model", ["LinearRegression","RandomForest","XGBoost"])
         if st.button("▶ Train Model"):
-            if model_choice=="LinearRegression":
+            if model_choice == "LinearRegression":
                 m = LinearRegression()
-            elif model_choice=="RandomForest":
+            elif model_choice == "RandomForest":
                 m = RandomForestRegressor(n_estimators=100, random_state=42)
             else:
                 m = XGBRegressor(n_estimators=100, random_state=42)
@@ -207,9 +203,12 @@ with tab_ts:
             infer_datetime_format=True,
             errors="coerce"
         )
-        df_ts = (df_ts.dropna(subset=[date_col,target])
-                       .sort_values(date_col)
-                       .set_index(date_col))
+        df_ts = (
+            df_ts
+            .dropna(subset=[date_col,target])
+            .sort_values(date_col)
+            .set_index(date_col)
+        )
         ts = df_ts[target]
         freq = pd.infer_freq(ts.index) or "M"
 
@@ -220,7 +219,7 @@ with tab_ts:
                 p,d,q = map(int,order.split(","))
                 with st.spinner("Fitting ARIMA…"):
                     ar = ARIMA(ts, order=(p,d,q)).fit()
-                fc = ar.forecast(periods)
+                fc  = ar.forecast(periods)
                 idx = pd.date_range(ts.index[-1], periods=periods+1, freq=freq)[1:]
                 fig = px.line(ts, title="ARIMA Forecast")
                 fig.add_scatter(x=idx, y=fc, mode="lines", name="Forecast")
@@ -234,58 +233,8 @@ with tab_ts:
                     m = Prophet(yearly_seasonality=True)
                     m.fit(df_p)
                 future = m.make_future_dataframe(periods=periods, freq=freq)
-                fc = m.predict(future)
-                fig = px.line(fc, x="ds", y="yhat", title="Prophet Forecast")
-                st.plotly_chart(fig, use_container_width=True)
-
-        # LSTM
-        if Sequential and st.checkbox("Enable LSTM"):
-            lag    = st.slider("LSTM lookback", 1, 12, 3)
-            epochs = st.number_input("Epochs", 1, 200, 50)
-            if st.button("▶ Run LSTM"):
-                arr    = ts.values.reshape(-1,1)
-                scaler = MinMaxScaler()
-                scaled = scaler.fit_transform(arr)
-                Xs, ys = [], []
-                for i in range(lag, len(scaled)):
-                    Xs.append(scaled[i-lag:i,0]); ys.append(scaled[i,0])
-                Xs = np.array(Xs).reshape(-1,lag,1); ys = np.array(ys)
-                split = int(0.8 * len(Xs))
-                X_tr, X_te = Xs[:split], Xs[split:]; y_tr, y_te = ys[:split], ys[split:]
-                model = Sequential([LSTM(50,input_shape=(lag,1)), Dense(1)])
-                model.compile("adam","mse")
-                with st.spinner("Training LSTM…"):
-                    model.fit(X_tr, y_tr, epochs=epochs, verbose=0)
-                last = scaled[-lag:].reshape(1,lag,1)
-                fc = []
-                for _ in range(periods):
-                    nxt    = model.predict(last)[0,0]
-                    fc.append(nxt)
-                    last   = np.roll(last,-1); last[0,-1,0] = nxt
-                fc = scaler.inverse_transform(np.array(fc).reshape(-1,1)).flatten()
-                idx = pd.date_range(ts.index[-1], periods=periods+1, freq=freq)[1:]
-                fig = px.line(ts, title="LSTM Forecast")
-                fig.add_scatter(x=idx, y=fc, mode="lines", name="Forecast")
-                st.plotly_chart(fig, use_container_width=True)
-
-        # XGBoost TS
-        if st.checkbox("Enable XGBoost TS"):
-            n_lags = st.slider("XGB lag features", 1,12,3)
-            if st.button("▶ Run XGB-TS"):
-                df_lag = pd.DataFrame({target: ts})
-                for i in range(1,n_lags+1):
-                    df_lag[f"lag_{i}"] = df_lag[target].shift(i)
-                df_lag.dropna(inplace=True)
-                X_all,y_all = df_lag.drop(target,axis=1), df_lag[target]
-                X_tr, X_te, y_tr, y_te = train_test_split(X_all, y_all, test_size=0.2, shuffle=False)
-                xgb = XGBRegressor(n_estimators=100, random_state=42)
-                with st.spinner("Training XGB-TS…"):
-                    xgb.fit(X_tr, y_tr)
-                preds = xgb.predict(X_te)
-                st.success(f"MAE: {mean_absolute_error(y_te,preds):.2f}")
-                idx = pd.date_range(ts.index[-1], periods=periods+1, freq=freq)[1:]
-                fig = px.line(ts, title="XGB-TS Forecast")
-                fig.add_scatter(x=idx, y=preds[:periods], mode="lines", name="Forecast")
+                fc     = m.predict(future)
+                fig    = px.line(fc, x="ds", y="yhat", title="Prophet Forecast")
                 st.plotly_chart(fig, use_container_width=True)
 
 # ── TAB 4: INTERACTIVE DASHBOARDS ───────────────────────────────────────────────
