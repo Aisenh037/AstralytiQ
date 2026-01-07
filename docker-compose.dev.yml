@@ -1,0 +1,112 @@
+version: '3.8'
+
+# Development overrides for docker-compose.yml
+services:
+  # API Gateway - Development Configuration
+  api-gateway:
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=debug
+      - RELOAD=true
+    volumes:
+      - ./src:/app/src  # Enable hot reload
+    command: uvicorn src.services.api_gateway.main:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+
+  # User Service - Development Configuration
+  user-service:
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=debug
+      - RELOAD=true
+    volumes:
+      - ./src:/app/src  # Enable hot reload
+    command: uvicorn src.services.user_service.main:app --host 0.0.0.0 --port 8001 --reload --log-level debug
+
+  # Tenant Service - Development Configuration
+  tenant-service:
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=debug
+      - RELOAD=true
+    volumes:
+      - ./src:/app/src  # Enable hot reload
+    command: uvicorn src.services.tenant_service.main:app --host 0.0.0.0 --port 8002 --reload --log-level debug
+
+  # Data Service - Development Configuration
+  data-service:
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=debug
+      - RELOAD=true
+      - MAX_FILE_SIZE_MB=50  # Smaller for development
+    volumes:
+      - ./src:/app/src  # Enable hot reload
+      - ./storage:/app/storage  # Local storage for development
+    command: uvicorn src.services.data_service.main:app --host 0.0.0.0 --port 8003 --reload --log-level debug
+
+  # ML Service - Development Configuration
+  ml-service:
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=debug
+      - RELOAD=true
+    volumes:
+      - ./src:/app/src  # Enable hot reload
+      - ./storage:/app/storage  # Local storage for development
+    command: uvicorn src.services.ml_service.main:app --host 0.0.0.0 --port 8004 --reload --log-level debug
+
+  # Development Database with exposed ports
+  postgres:
+    ports:
+      - "5432:5432"  # Expose for development tools
+
+  mongodb:
+    ports:
+      - "27017:27017"  # Expose for development tools
+
+  redis:
+    ports:
+      - "6379:6379"  # Expose for development tools
+
+  # Development tools
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - enterprise-network
+    profiles:
+      - dev-tools
+
+  mongo-express:
+    image: mongo-express:latest
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: password
+      ME_CONFIG_MONGODB_SERVER: mongodb
+    ports:
+      - "8081:8081"
+    depends_on:
+      - mongodb
+    networks:
+      - enterprise-network
+    profiles:
+      - dev-tools
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8082:8081"
+    depends_on:
+      - redis
+    networks:
+      - enterprise-network
+    profiles:
+      - dev-tools

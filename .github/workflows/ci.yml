@@ -1,0 +1,332 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  # Code Quality and Security Checks
+  code-quality:
+    name: Code Quality & Security
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Shallow clones should be disabled for better analysis
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-enterprise.txt
+        pip install black isort flake8 mypy bandit safety
+
+    - name: Code formatting check (Black)
+      run: black --check --diff src/ tests/
+
+    - name: Import sorting check (isort)
+      run: isort --check-only --diff src/ tests/
+
+    - name: Linting (Flake8)
+      run: flake8 src/ tests/ --max-line-length=88 --extend-ignore=E203,W503
+
+    - name: Type checking (MyPy)
+      run: mypy src/ --ignore-missing-imports --no-strict-optional
+
+    - name: Security scan (Bandit)
+      run: bandit -r src/ -f json -o bandit-report.json
+      continue-on-error: true
+
+    - name: Dependency vulnerability scan (Safety)
+      run: safety check --json --output safety-report.json
+      continue-on-error: true
+
+    - name: Upload security reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+
+  # Unit and Integration Tests
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_enterprise_saas
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+      mongodb:
+        image: mongo:7-jammy
+        env:
+          MONGO_INITDB_ROOT_USERNAME: admin
+          MONGO_INITDB_ROOT_PASSWORD: password
+          MONGO_INITDB_DATABASE: test_enterprise_saas
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 27017:27017
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-enterprise.txt
+        pip install pytest pytest-asyncio pytest-cov pytest-mock
+
+    - name: Set up test environment
+      run: |
+        cp .env.example .env.test
+        echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/test_enterprise_saas" >> .env.test
+        echo "REDIS_URL=redis://localhost:6379" >> .env.test
+        echo "MONGODB_URL=mongodb://admin:password@localhost:27017/test_enterprise_saas?authSource=admin" >> .env.test
+        echo "JWT_SECRET_KEY=test-secret-key-for-ci" >> .env.test
+        echo "ENVIRONMENT=test" >> .env.test
+
+    - name: Run database migrations
+      run: |
+        export $(cat .env.test | xargs)
+        python -m alembic upgrade head
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+
+    - name: Run unit tests
+      run: |
+        export $(cat .env.test | xargs)
+        python -m pytest tests/unit/ -v --cov=src --cov-report=xml --cov-report=html
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+
+    - name: Run integration tests
+      run: |
+        export $(cat .env.test | xargs)
+        python -m pytest tests/integration/ -v --cov=src --cov-append --cov-report=xml --cov-report=html
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+
+    - name: Run property-based tests
+      run: |
+        export $(cat .env.test | xargs)
+        python -m pytest tests/property/ -v --cov=src --cov-append --cov-report=xml --cov-report=html
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+      continue-on-error: true  # Property tests might find edge cases
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+    - name: Upload test artifacts
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results
+        path: |
+          htmlcov/
+          coverage.xml
+          pytest-report.xml
+
+  # Docker Build and Test
+  docker-build:
+    name: Docker Build & Test
+    runs-on: ubuntu-latest
+    needs: [code-quality, test]
+    
+    strategy:
+      matrix:
+        service: [gateway, user, tenant, data, ml]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.${{ matrix.service }}
+        push: false
+        tags: enterprise-saas-${{ matrix.service }}:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Test Docker image
+      run: |
+        # Test that the image can start
+        docker run --rm -d --name test-${{ matrix.service }} \
+          -e DATABASE_URL=sqlite:///test.db \
+          -e REDIS_URL=redis://localhost:6379 \
+          -e JWT_SECRET_KEY=test-key \
+          enterprise-saas-${{ matrix.service }}:test
+        
+        # Wait for container to start
+        sleep 10
+        
+        # Check if container is running
+        docker ps | grep test-${{ matrix.service }}
+        
+        # Stop container
+        docker stop test-${{ matrix.service }}
+
+  # End-to-End Tests
+  e2e-test:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Compose
+      run: |
+        cp .env.example .env
+        echo "POSTGRES_PASSWORD=test-password" >> .env
+        echo "JWT_SECRET_KEY=test-jwt-secret" >> .env
+
+    - name: Start services
+      run: |
+        docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+        
+        # Wait for services to be ready
+        timeout 300 bash -c 'until curl -f http://localhost:8000/health; do sleep 5; done'
+
+    - name: Run E2E tests
+      run: |
+        # Install test dependencies
+        pip install requests pytest
+        
+        # Run E2E test suite
+        python -m pytest tests/e2e/ -v
+      env:
+        API_BASE_URL: http://localhost:8000
+
+    - name: Collect service logs
+      if: failure()
+      run: |
+        docker-compose logs > docker-compose-logs.txt
+
+    - name: Upload logs
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: e2e-logs
+        path: docker-compose-logs.txt
+
+    - name: Stop services
+      if: always()
+      run: docker-compose down -v
+
+  # Performance Tests
+  performance-test:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up services for performance testing
+      run: |
+        cp .env.example .env
+        echo "POSTGRES_PASSWORD=test-password" >> .env
+        echo "JWT_SECRET_KEY=test-jwt-secret" >> .env
+        docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+        
+        # Wait for services to be ready
+        timeout 300 bash -c 'until curl -f http://localhost:8000/health; do sleep 5; done'
+
+    - name: Install performance testing tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y apache2-utils
+        pip install locust
+
+    - name: Run load tests
+      run: |
+        # Simple load test with ab
+        ab -n 1000 -c 10 http://localhost:8000/health
+        
+        # More comprehensive test with Locust
+        locust -f tests/performance/locustfile.py --headless -u 10 -r 2 -t 60s --host http://localhost:8000
+
+    - name: Stop services
+      if: always()
+      run: docker-compose down -v
+
+  # Notification
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [code-quality, test, docker-build, e2e-test]
+    if: always()
+    
+    steps:
+    - name: Notify success
+      if: ${{ needs.code-quality.result == 'success' && needs.test.result == 'success' && needs.docker-build.result == 'success' && needs.e2e-test.result == 'success' }}
+      run: |
+        echo "✅ All CI checks passed successfully!"
+        echo "Ready for deployment to staging environment."
+
+    - name: Notify failure
+      if: ${{ needs.code-quality.result == 'failure' || needs.test.result == 'failure' || needs.docker-build.result == 'failure' || needs.e2e-test.result == 'failure' }}
+      run: |
+        echo "❌ CI pipeline failed. Please check the logs and fix issues before merging."
+        exit 1

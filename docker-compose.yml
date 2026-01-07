@@ -1,0 +1,267 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: enterprise_saas
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - enterprise-network
+
+  # MongoDB
+  mongodb:
+    image: mongo:7-jammy
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: enterprise_saas
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - enterprise-network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - enterprise-network
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_HOST=postgres
+      - MONGODB_HOST=mongodb
+      - REDIS_HOST=redis
+      - USER_SERVICE_URL=http://user-service:8001
+      - TENANT_SERVICE_URL=http://tenant-service:8002
+      - DATA_SERVICE_URL=http://data-service:8003
+      - ML_SERVICE_URL=http://ml-service:8004
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      tenant-service:
+        condition: service_healthy
+      data-service:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro  # Read-only for security
+    networks:
+      - enterprise-network
+    restart: unless-stopped
+
+  # User Service
+  user-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.user
+    ports:
+      - "8001:8001"
+    environment:
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-change-in-production}
+      - JWT_ALGORITHM=HS256
+      - JWT_EXPIRATION_HOURS=24
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro  # Read-only for security
+    networks:
+      - enterprise-network
+    restart: unless-stopped
+
+  # Tenant Service
+  tenant-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.tenant
+    ports:
+      - "8002:8002"
+    environment:
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro  # Read-only for security
+    networks:
+      - enterprise-network
+    restart: unless-stopped
+
+  # Data Service
+  data-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.data
+    ports:
+      - "8003:8003"
+    environment:
+      - POSTGRES_HOST=postgres
+      - MONGODB_HOST=mongodb
+      - REDIS_HOST=redis
+      - MAX_FILE_SIZE_MB=100
+      - UPLOAD_PATH=/app/storage/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro  # Read-only for security
+      - data_storage:/app/storage  # Persistent storage for uploaded files
+    networks:
+      - enterprise-network
+    restart: unless-stopped
+
+  # ML Service
+  ml-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    ports:
+      - "8004:8004"
+    environment:
+      - POSTGRES_HOST=postgres
+      - MONGODB_HOST=mongodb
+      - REDIS_HOST=redis
+      - MODEL_STORAGE_PATH=/app/storage/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro  # Read-only for security
+      - ml_storage:/app/storage  # Persistent storage for ML models
+    networks:
+      - enterprise-network
+    restart: unless-stopped
+
+  # Nginx Load Balancer (Optional - for production)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro  # SSL certificates
+    depends_on:
+      - api-gateway
+    networks:
+      - enterprise-network
+    restart: unless-stopped
+    profiles:
+      - production  # Only start with --profile production
+
+  # Monitoring with Prometheus (Optional)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    networks:
+      - enterprise-network
+    restart: unless-stopped
+    profiles:
+      - monitoring  # Only start with --profile monitoring
+
+  # Grafana for visualization (Optional)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - enterprise-network
+    restart: unless-stopped
+    profiles:
+      - monitoring  # Only start with --profile monitoring
+
+volumes:
+  postgres_data:
+    driver: local
+  mongodb_data:
+    driver: local
+  redis_data:
+    driver: local
+  data_storage:
+    driver: local
+  ml_storage:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  enterprise-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

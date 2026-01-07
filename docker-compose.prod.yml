@@ -1,0 +1,170 @@
+version: '3.8'
+
+# Production overrides for docker-compose.yml
+services:
+  # API Gateway - Production Configuration
+  api-gateway:
+    environment:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=info
+      - WORKERS=4
+    volumes: []  # Remove development volume mounts
+    command: gunicorn src.services.api_gateway.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # User Service - Production Configuration
+  user-service:
+    environment:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=info
+      - WORKERS=2
+    volumes: []  # Remove development volume mounts
+    command: gunicorn src.services.user_service.main:app -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8001
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Tenant Service - Production Configuration
+  tenant-service:
+    environment:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=info
+      - WORKERS=2
+    volumes: []  # Remove development volume mounts
+    command: gunicorn src.services.tenant_service.main:app -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8002
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Data Service - Production Configuration
+  data-service:
+    environment:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=info
+      - WORKERS=2
+      - MAX_FILE_SIZE_MB=500  # Increased for production
+    volumes:
+      - data_storage:/app/storage  # Only persistent storage
+    command: gunicorn src.services.data_service.main:app -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8003
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  # ML Service - Production Configuration
+  ml-service:
+    environment:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=info
+      - WORKERS=2
+    volumes:
+      - ml_storage:/app/storage  # Only persistent storage
+    command: gunicorn src.services.ml_service.main:app -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8004
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+  # PostgreSQL - Production Configuration
+  postgres:
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}  # Must be set in production
+      - POSTGRES_DB=${POSTGRES_DB:-enterprise_saas}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups  # Backup directory
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+  # MongoDB - Production Configuration
+  mongodb:
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_USERNAME:-admin}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD}  # Must be set in production
+      - MONGO_INITDB_DATABASE=${MONGO_DATABASE:-enterprise_saas}
+    command: mongod --auth --bind_ip_all --replSet rs0
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Redis - Production Configuration
+  redis:
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Enable Nginx Load Balancer for Production
+  nginx:
+    profiles: []  # Remove profile restriction for production
+
+  # Enable Monitoring for Production
+  prometheus:
+    profiles: []  # Remove profile restriction for production
+
+  grafana:
+    profiles: []  # Remove profile restriction for production

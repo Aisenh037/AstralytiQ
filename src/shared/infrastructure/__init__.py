@@ -1,0 +1,1 @@
+# Infrastructure components (database, messaging, etc.)
