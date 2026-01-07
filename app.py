@@ -21,7 +21,7 @@ DEMO_MODE = True
 
 # Page configuration
 st.set_page_config(
-    page_title="AstralytiQ - No Code Analytics Platform",
+    page_title="AstralytiQ",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -90,7 +90,7 @@ def main():
 
 def show_dashboard():
     """Show main dashboard."""
-    st.header("📊 Platform Overview")
+    st.header("📊 AstralytiQ - No Code Analytics Platform")
     
     # Metrics row
     col1, col2, col3, col4 = st.columns(4)
@@ -810,3 +810,4 @@ def upload_dataset(file, name, description):
 if __name__ == "__main__":
 
     main()
+
