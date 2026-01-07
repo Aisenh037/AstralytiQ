@@ -21,7 +21,7 @@ DEMO_MODE = True
 
 # Page configuration
 st.set_page_config(
-    page_title="Enterprise SaaS Analytics Platform",
+    page_title="AstralytiQ - No Code Analytics Platform",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -808,4 +808,5 @@ def upload_dataset(file, name, description):
     return True
 
 if __name__ == "__main__":
+
     main()
