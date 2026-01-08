@@ -97,16 +97,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Session state initialization
-if 'user_level' not in st.session_state:
-    st.session_state.user_level = 'Beginner'
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
-if 'user_data' not in st.session_state:
-    st.session_state.user_data = {}
-if 'demo_data' not in st.session_state:
-    st.session_state.demo_data = generate_demo_data()
-
 def generate_demo_data():
     """Generate comprehensive demo data for the platform."""
     np.random.seed(42)
@@ -164,6 +154,16 @@ def generate_demo_data():
             'uptime': "99.9%"
         }
     }
+
+# Session state initialization
+if 'user_level' not in st.session_state:
+    st.session_state.user_level = 'Beginner'
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'user_data' not in st.session_state:
+    st.session_state.user_data = {}
+if 'demo_data' not in st.session_state:
+    st.session_state.demo_data = generate_demo_data()
 
 def show_header():
     """Display the main header with branding."""
