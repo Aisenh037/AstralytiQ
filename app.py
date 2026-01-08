@@ -45,9 +45,14 @@ st.set_page_config(
 DEMO_MODE = True
 API_BASE_URL = "http://localhost:8000" if not DEMO_MODE else None
 
-# Custom CSS for professional styling
+# Custom CSS for professional styling with theme compatibility
 st.markdown("""
 <style>
+    /* Force light theme */
+    .stApp {
+        background-color: #FFFFFF !important;
+    }
+    
     .main-header {
         font-size: 3rem;
         background: linear-gradient(90deg, #FF6B6B, #4ECDC4, #45B7D1);
@@ -61,38 +66,42 @@ st.markdown("""
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 1.5rem;
         border-radius: 15px;
-        color: white;
+        color: white !important;
         margin: 1rem 0;
         box-shadow: 0 8px 32px rgba(0,0,0,0.1);
     }
     .metric-card {
-        background: white;
+        background: white !important;
         padding: 1.5rem;
         border-radius: 10px;
         border-left: 4px solid #FF6B6B;
         box-shadow: 0 4px 16px rgba(0,0,0,0.1);
         margin: 0.5rem 0;
+        color: #262730 !important;
     }
     .success-message {
         background: linear-gradient(90deg, #56ab2f, #a8e6cf);
-        color: white;
+        color: white !important;
         padding: 1rem;
         border-radius: 8px;
         margin: 1rem 0;
     }
     .info-box {
         background: linear-gradient(135deg, #74b9ff, #0984e3);
-        color: white;
+        color: white !important;
         padding: 1rem;
         border-radius: 8px;
         margin: 1rem 0;
     }
-    .sidebar .sidebar-content {
-        background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    
+    /* Ensure text visibility in all themes */
+    .stMarkdown, .stText {
+        color: #262730 !important;
     }
-    .stSelectbox > div > div {
-        background-color: #f8f9fa;
-        border-radius: 8px;
+    
+    /* Sidebar styling */
+    .css-1d391kg {
+        background-color: #F0F2F6 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -164,6 +173,129 @@ if 'user_data' not in st.session_state:
     st.session_state.user_data = {}
 if 'demo_data' not in st.session_state:
     st.session_state.demo_data = generate_demo_data()
+if 'current_user' not in st.session_state:
+    st.session_state.current_user = None
+
+# Simple user database (in production, use Supabase/database)
+DEMO_USERS = {
+    "demo@astralytiq.com": {
+        "password": "demo123",
+        "name": "Demo User",
+        "role": "Admin",
+        "level": "Advanced"
+    },
+    "john@company.com": {
+        "password": "password123",
+        "name": "John Doe",
+        "role": "Data Scientist",
+        "level": "Intermediate"
+    },
+    "jane@company.com": {
+        "password": "password123",
+        "name": "Jane Smith",
+        "role": "Analyst",
+        "level": "Beginner"
+    }
+}
+
+def authenticate_user(email, password):
+    """Simple authentication function."""
+    if email in DEMO_USERS and DEMO_USERS[email]["password"] == password:
+        return DEMO_USERS[email]
+    return None
+
+def show_login_page():
+    """Display login page."""
+    st.markdown('<h1 class="main-header">🚀 AstralytiQ Login</h1>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align: center; font-size: 1.2rem; color: #666; margin-bottom: 2rem;">Educational MLOps Platform</p>', unsafe_allow_html=True)
+    
+    # Login form
+    with st.container():
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            st.markdown("""
+            <div class="feature-card">
+                <h3 style="text-align: center; margin-bottom: 1rem;">Welcome Back!</h3>
+                <p style="text-align: center; margin-bottom: 2rem;">Sign in to access your MLOps platform</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            with st.form("login_form"):
+                email = st.text_input("📧 Email", placeholder="demo@astralytiq.com")
+                password = st.text_input("🔒 Password", type="password", placeholder="demo123")
+                
+                col_login, col_demo = st.columns(2)
+                
+                with col_login:
+                    login_button = st.form_submit_button("🚀 Login", use_container_width=True)
+                
+                with col_demo:
+                    demo_button = st.form_submit_button("🎭 Demo Mode", use_container_width=True)
+                
+                if login_button:
+                    if email and password:
+                        user = authenticate_user(email, password)
+                        if user:
+                            st.session_state.authenticated = True
+                            st.session_state.current_user = user
+                            st.session_state.user_level = user["level"]
+                            st.success(f"Welcome back, {user['name']}!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Invalid email or password")
+                    else:
+                        st.warning("⚠️ Please enter both email and password")
+                
+                if demo_button:
+                    # Demo mode login
+                    demo_user = DEMO_USERS["demo@astralytiq.com"]
+                    st.session_state.authenticated = True
+                    st.session_state.current_user = demo_user
+                    st.session_state.user_level = demo_user["level"]
+                    st.success(f"Welcome to Demo Mode, {demo_user['name']}!")
+                    st.rerun()
+            
+            # Demo credentials info
+            st.markdown("""
+            <div class="info-box">
+                <h4>🎯 Demo Credentials</h4>
+                <p><strong>Email:</strong> demo@astralytiq.com</p>
+                <p><strong>Password:</strong> demo123</p>
+                <p><strong>Or try:</strong> john@company.com / password123</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Features preview
+            st.markdown("""
+            <div class="metric-card">
+                <h4>✨ Platform Features</h4>
+                <ul>
+                    <li>🤖 Complete ML Studio with model training</li>
+                    <li>📊 Interactive data management and analytics</li>
+                    <li>📈 Real-time dashboards and monitoring</li>
+                    <li>👥 Multi-level user experiences</li>
+                    <li>🔧 Advanced platform management</li>
+                </ul>
+            </div>
+            """, unsafe_allow_html=True)
+
+def show_user_profile():
+    """Show user profile and logout option."""
+    if st.session_state.current_user:
+        user = st.session_state.current_user
+        
+        st.sidebar.markdown("### 👤 User Profile")
+        st.sidebar.markdown(f"**Name:** {user['name']}")
+        st.sidebar.markdown(f"**Role:** {user['role']}")
+        st.sidebar.markdown(f"**Level:** {user['level']}")
+        
+        if st.sidebar.button("🚪 Logout"):
+            st.session_state.authenticated = False
+            st.session_state.current_user = None
+            st.session_state.user_data = {}
+            st.success("👋 Logged out successfully!")
+            st.rerun()
 
 def show_header():
     """Display the main header with branding."""
@@ -948,7 +1080,15 @@ def show_advanced_features():
 
 def main():
     """Main application function."""
+    # Check authentication status
+    if not st.session_state.authenticated:
+        show_login_page()
+        return
+    
     show_header()
+    
+    # User profile and logout
+    show_user_profile()
     
     # User level selector
     user_level = show_user_level_selector()
@@ -974,7 +1114,7 @@ def main():
         st.sidebar.info("Running in demo mode with sample data. Deploy with backend services for full functionality.")
     
     # Route to appropriate page
-    if selected_page == "🏠 Dashboard":
+    if selected_page == "� DasAhboard":
         show_dashboard()
     elif selected_page == "📊 Data Management":
         show_data_management()
