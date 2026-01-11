@@ -143,9 +143,20 @@ scripts\deploy-streamlit.bat
 📊 Monitor usage in GCP Console
 ```
 
-### **Path B: Full Backend Deployment**
+### **Path B: Forecasting Backend Deployment (NEW)**
 ```bash
-# Deploy complete microservices architecture
+# This is required for the ML Studio tab to work with real models
+chmod +x scripts/deploy_gcp.sh
+./scripts/deploy_gcp.sh
+```
+**Benefits:**
+- ✅ Enables real-time Prophet/ARIMA training
+- ✅ High impact for ML/Data Science roles
+- ✅ Shows integration between two cloud services
+
+### **Path C: Full Enterprise Microservices**
+```bash
+# Deploy complete microservices (SQL, Redis, ML Service)
 scripts/deploy-backend.bat  # Windows
 ./scripts/deploy-backend.sh # macOS/Linux
 ```

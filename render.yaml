@@ -1,0 +1,19 @@
+# Render.com deployment configuration
+services:
+  - type: web
+    name: astralytiq-backend
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+    plan: free
+    branch: main
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        value: sqlite:///./astralytiq.db
+      - key: CORS_ORIGINS
+        value: "https://astralytiq-platform.streamlit.app,http://localhost:8501"

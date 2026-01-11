@@ -1,0 +1,36 @@
+# Google Cloud Build configuration
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-f', 'Dockerfile.backend',
+      '-t', 'gcr.io/$PROJECT_ID/astralytiq-backend:$COMMIT_SHA',
+      '-t', 'gcr.io/$PROJECT_ID/astralytiq-backend:latest',
+      '.'
+    ]
+
+  # Push the Docker image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/astralytiq-backend:$COMMIT_SHA']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/astralytiq-backend:latest']
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'run', 'deploy', 'astralytiq-backend',
+      '--image', 'gcr.io/$PROJECT_ID/astralytiq-backend:$COMMIT_SHA',
+      '--region', 'us-central1',
+      '--platform', 'managed',
+      '--allow-unauthenticated',
+      '--port', '8080',
+      '--memory', '512Mi',
+      '--cpu', '1',
+      '--max-instances', '10',
+      '--set-env-vars', 'ENVIRONMENT=production,JWT_SECRET=AstralytiQ-Production-JWT-Secret-Key-2025-Campus-Placement,CORS_ORIGINS=https://astralytiq-platform.streamlit.app'
+    ]
+
+options:
+  logging: CLOUD_LOGGING_ONLY

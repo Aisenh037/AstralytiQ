@@ -25,8 +25,13 @@ logger = logging.getLogger(__name__)
 class BackendClient:
     """Enterprise-grade backend client for API communication."""
     
-    def __init__(self, base_url: str = "http://localhost:8081"):
-        self.base_url = base_url
+    def __init__(self, base_url: Optional[str] = None):
+        # Read from Streamlit secrets (production) or environment or fallback to localhost
+        if base_url:
+            self.base_url = base_url
+        else:
+            self.base_url = st.secrets.get("API_BASE_URL", "http://localhost:8081").rstrip("/")
+        
         self.session = requests.Session()
         self.session.headers.update({
             "Content-Type": "application/json",
@@ -154,6 +159,70 @@ class BackendClient:
             logger.error(f"Get metrics failed: {e}")
             return {}
 
+    # --- Forecasting Endpoints ---
+
+    def upload_data(self, files: Dict[str, Any]) -> Dict[str, Any]:
+        """Upload dataset for forecasting."""
+        try:
+            headers = self._get_auth_headers()
+            # Remove Content-Type for file uploads as requests handles it
+            if "Content-Type" in headers:
+                del headers["Content-Type"]
+            
+            response = self.session.post(
+                f"{self.base_url}/api/v1/ml/upload-data",
+                headers=headers,
+                files=files,
+                timeout=30
+            )
+            return self._handle_response(response)
+        except Exception as e:
+            logger.error(f"Upload data failed: {e}")
+            return {"error": str(e)}
+
+    def train_forecast(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Start a forecasting training job."""
+        try:
+            headers = self._get_auth_headers()
+            response = self.session.post(
+                f"{self.base_url}/api/v1/ml/forecast/train",
+                headers=headers,
+                json=config,
+                timeout=10
+            )
+            return self._handle_response(response)
+        except Exception as e:
+            logger.error(f"Train forecast failed: {e}")
+            return {"error": str(e)}
+
+    def get_job_status(self, job_id: str) -> Dict[str, Any]:
+        """Get the status of a training job."""
+        try:
+            headers = self._get_auth_headers()
+            response = self.session.get(
+                f"{self.base_url}/api/v1/ml/forecast/jobs/{job_id}",
+                headers=headers,
+                timeout=10
+            )
+            return self._handle_response(response)
+        except Exception as e:
+            logger.error(f"Get job status failed: {e}")
+            return {"error": str(e)}
+
+    def get_forecast(self, model_id: str) -> Dict[str, Any]:
+        """Get forecast results from a trained model."""
+        try:
+            headers = self._get_auth_headers()
+            response = self.session.get(
+                f"{self.base_url}/api/v1/ml/forecast/{model_id}",
+                headers=headers,
+                timeout=10
+            )
+            return self._handle_response(response)
+        except Exception as e:
+            logger.error(f"Get forecast failed: {e}")
+            return {"error": str(e)}
+
 # Global backend client instance
 @st.cache_resource
 def get_backend_client() -> BackendClient:
@@ -256,10 +325,11 @@ def show_backend_status():
 
 def show_api_documentation():
     """Show API documentation links."""
+    client = get_backend_client()
     st.sidebar.markdown("### 📚 API Documentation")
-    st.sidebar.markdown("[🔗 Swagger UI](http://localhost:8081/docs)")
-    st.sidebar.markdown("[📖 ReDoc](http://localhost:8081/redoc)")
-    st.sidebar.markdown("[🔍 Health Check](http://localhost:8081/health)")
+    st.sidebar.markdown(f"[🔗 Swagger UI]({client.base_url}/docs)")
+    st.sidebar.markdown(f"[📖 ReDoc]({client.base_url}/redoc)")
+    st.sidebar.markdown(f"[🔍 Health Check]({client.base_url}/health)")
 
 # Enhanced login function with backend integration
 def enhanced_login_form():

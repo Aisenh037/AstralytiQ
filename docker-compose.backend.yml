@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  astralytiq-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8080:8080"
+    environment:
+      - ENVIRONMENT=production
+      - JWT_SECRET=AstralytiQ-Production-JWT-Secret-Key-2025-Campus-Placement
+      - CORS_ORIGINS=https://astralytiq-platform.streamlit.app,http://localhost:8501
+      - DATABASE_URL=sqlite:///./astralytiq.db
+    volumes:
+      - backend_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  backend_data:

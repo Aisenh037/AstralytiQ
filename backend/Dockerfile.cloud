@@ -1,0 +1,45 @@
+# Build stage (optional, for smaller final image)
+FROM python:3.10-slim-bullseye as builder
+
+# Set work directory
+WORKDIR /app
+
+# Install build dependencies for Prophet/pystan
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies
+COPY requirements-backend.txt .
+RUN pip install --user --no-cache-dir -r requirements-backend.txt
+
+# Final stage
+FROM python:3.10-slim-bullseye
+
+WORKDIR /app
+
+# Copy installed packages from builder
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+# Copy backend code
+COPY backend/ ./backend/
+# Copy src/ infrastructure (needed by backend for forecast_engine)
+COPY src/ ./src/
+
+# Create model and upload directories
+RUN mkdir -p models/datasets/uploads models/forecasts
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1
+ENV ENVIRONMENT=production
+ENV PORT=8080
+
+# Expose port
+EXPOSE 8080
+
+# Run the backend
+# Use the backend folder if that's where main.py is
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT}"]

@@ -27,18 +27,20 @@ from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 import logging
 import uuid
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configuration
-JWT_SECRET = "your-super-secret-jwt-key-change-in-production"
+# Configuration from environment variables
+JWT_SECRET = os.getenv("JWT_SECRET", "AstralytiQ-Production-JWT-Secret-Key-2025")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
 # Database setup
-DATABASE_URL = "astralytiq.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "astralytiq.db")
 
 def init_database():
     """Initialize SQLite database with tables."""
@@ -428,9 +430,10 @@ app = FastAPI(
 )
 
 # Add CORS middleware
+cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:8501,https://astralytiq-platform.streamlit.app").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure for production
+    allow_origins=cors_origins,  # Production CORS configuration
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -778,6 +781,346 @@ async def root():
             "CORS Support for Frontend Integration"
         ]
     }
+
+# ==================== NEW FORECASTING ENDPOINTS ====================
+
+from fastapi import File, UploadFile, BackgroundTasks
+import pandas as pd
+from pathlib import Path
+import shutil
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+import uuid
+
+# Forecasting models schemas
+class DataUploadResponse(BaseModel):
+    dataset_id: str
+    filename: str
+    rows: int
+    columns: int
+    date_range: Dict[str, str]
+    preview: Dict[str, Any]
+
+class StartForecastTrainingRequest(BaseModel):
+    dataset_id: str
+    date_column: str
+    value_column: str
+    model_type: str = "prophet"  # prophet or arima
+    forecast_periods: int = 30
+    seasonality_mode: str = "additive"
+    include_holidays: bool = False
+
+class ForecastTrainingResponse(BaseModel):
+    job_id: str
+    status: str
+    message: str
+    model_id: Optional[str] = None
+
+class ForecastPredictionResponse(BaseModel):
+    model_id: str
+    forecast_dates: List[str]
+    forecast_values: List[float]
+    lower_bound: List[float]
+    upper_bound: List[float]
+    components: Optional[Dict[str, List[float]]] = None
+    metrics: Dict[str, float]
+
+# Simple in-memory storage for training jobs (replace with DB in production)
+training_jobs = {}
+
+@app.post("/api/v1/ml/upload-data", response_model=DataUploadResponse, tags=["ML Models"])
+async def upload_training_data(
+    file: UploadFile = File(...),
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """
+    Upload CSV file for time series forecasting.
+    
+    The CSV should have at least two columns:
+    - Date column (any datetime format)
+    - Value column (numeric values to forecast)
+    """
+    try:
+        # Create uploads directory if not exists
+        upload_dir = Path("models/datasets/uploads")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate unique dataset ID
+        dataset_id = str(uuid.uuid4())
+        file_path = upload_dir / f"{dataset_id}.csv"
+        
+        # Save uploaded file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Read and validate CSV
+        df = pd.read_csv(file_path)
+        
+        if len(df) < 10:
+            raise HTTPException(status_code=400, detail="Need at least 10 rows for forecasting")
+        
+        # Try to find date and numeric columns
+        date_cols = []
+        numeric_cols = []
+        
+        for col in df.columns:
+            try:
+                pd.to_datetime(df[col])
+                date_cols.append(col)
+            except:
+                pass
+            
+            if pd.api.types.is_numeric_dtype(df[col]):
+                numeric_cols.append(col)
+        
+        # Get date range if date column found
+        date_range = {}
+        if date_cols:
+            first_date_col = date_cols[0]
+            dates = pd.to_datetime(df[first_date_col])
+            date_range = {
+                "start": str(dates.min()),
+                "end": str(dates.max())
+            }
+        
+        # Create preview
+        preview_df = df.head(5)
+        preview = {
+            "columns": df.columns.tolist(),
+            "sample_rows": preview_df.to_dict('records'),
+            "detected_date_columns": date_cols,
+            "detected_numeric_columns": numeric_cols
+        }
+        
+        return DataUploadResponse(
+            dataset_id=dataset_id,
+            filename=file.filename,
+            rows=len(df),
+            columns=len(df.columns),
+            date_range=date_range,
+            preview=preview
+        )
+        
+    except Exception as e:
+        logger.error(f"Error uploading data: {e}")
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+
+async def run_forecast_training(job_id: str, config: dict, user_id: int):
+    """Background task to train forecasting model."""
+    try:
+        # Update job status
+        training_jobs[job_id]["status"] = "training"
+        training_jobs[job_id]["progress"] = 10
+        
+        # Import forecast engine
+        import sys
+        sys.path.append(str(Path(__file__).parent.parent))
+        from src.services.ml_service.infrastructure.forecast_engine import (
+            TimeSeriesDataProcessor, ProphetForecaster
+        )
+        from src.services.ml_service.infrastructure.model_storage import ModelStorage
+        
+        # Load dataset
+        dataset_path = Path(f"models/datasets/uploads/{config['dataset_id']}.csv")
+        df = pd.read_csv(dataset_path)
+        
+        # Process data
+        training_jobs[job_id]["progress"] = 30
+        processor = TimeSeriesDataProcessor()
+        
+        is_valid, error = processor.validate_data(df, config['date_column'], config['value_column'])
+        if not is_valid:
+            training_jobs[job_id]["status"] = "failed"
+            training_jobs[job_id]["error"] = error
+            return
+        
+        prepared_data = processor.prepare_data(df, config['date_column'], config['value_column'])
+        data_stats = processor.get_data_stats()
+        
+        # Train model
+        training_jobs[job_id]["progress"] = 50
+        
+        if config['model_type'] == 'prophet':
+            forecaster = ProphetForecaster()
+            forecaster.train(
+                prepared_data,
+                seasonality_mode=config['seasonality_mode'],
+                include_holidays=config['include_holidays']
+            )
+            
+            # Generate forecast
+            training_jobs[job_id]["progress"] = 70
+            forecast = forecaster.predict(periods=config['forecast_periods'])
+            
+            # Evaluate on historical data (last 20% as test)
+            test_size = int(len(prepared_data) * 0.2)
+            train_data = prepared_data[:-test_size]
+            test_data = prepared_data[-test_size:]
+            
+            metrics = forecaster.evaluate(test_data)
+            
+            # Save model
+            training_jobs[job_id]["progress"] = 90
+            model_id = str(uuid.uuid4())
+            storage = ModelStorage()
+            
+            forecaster.save_model(str(storage.get_model_path(model_id, "prophet")))
+            
+            # Update database with new model
+            conn = sqlite3.connect(DATABASE_URL)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO ml_models (id, name, type, accuracy, created_by, status)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                model_id,
+                f"Forecast Model {config['dataset_id'][:8]}",
+                "Time Series Forecasting",
+                metrics.get('r2_score', 0.0),
+                user_id,
+                "Completed"
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+            # Update job status
+            training_jobs[job_id]["status"] = "completed"
+            training_jobs[job_id]["progress"] = 100
+            training_jobs[job_id]["model_id"] = model_id
+            training_jobs[job_id]["metrics"] = metrics
+            training_jobs[job_id]["data_stats"] = data_stats
+            
+    except Exception as e:
+        logger.error(f"Error training model: {e}")
+        training_jobs[job_id]["status"] = "failed"
+        training_jobs[job_id]["error"] = str(e)
+
+@app.post("/api/v1/ml/forecast/train", response_model=ForecastTrainingResponse, tags=["ML Models"])
+async def start_forecast_training(
+    request: StartForecastTrainingRequest,
+    background_tasks: BackgroundTasks,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """
+    Start training a forecasting model on uploaded data.
+    """
+    try:
+        # Verify dataset exists
+        dataset_path = Path(f"models/datasets/uploads/{request.dataset_id}.csv")
+        if not dataset_path.exists():
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Create training job
+        job_id = str(uuid.uuid4())
+        training_jobs[job_id] = {
+            "status": "queued",
+            "progress": 0,
+            "created_at": datetime.now(),
+            "user_id": current_user.id
+        }
+        
+        # Start background training
+        config = {
+            "dataset_id": request.dataset_id,
+            "date_column": request.date_column,
+            "value_column": request.value_column,
+            "model_type": request.model_type,
+            "forecast_periods": request.forecast_periods,
+            "seasonality_mode": request.seasonality_mode,
+            "include_holidays": request.include_holidays
+        }
+        
+        background_tasks.add_task(run_forecast_training, job_id, config, current_user.id)
+        
+        return ForecastTrainingResponse(
+            job_id=job_id,
+            status="queued",
+            message="Training job started successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error starting training: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/ml/forecast/jobs/{job_id}", tags=["ML Models"])
+async def get_training_job_status(
+    job_id: str,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Get status of a forecast training job."""
+    if job_id not in training_jobs:
+        raise HTTPException(status_code=404, detail="Training job not found")
+    
+    job = training_jobs[job_id]
+    
+    return {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "progress": job.get("progress", 0),
+        "model_id": job.get("model_id"),
+        "metrics": job.get("metrics"),
+        "error": job.get("error"),
+        "created_at": job.get("created_at").isoformat() if job.get("created_at") else None
+    }
+
+@app.get("/api/v1/ml/forecast/{model_id}", response_model=ForecastPredictionResponse, tags=["ML Models"])
+async def get_forecast_predictions(
+    model_id: str,
+    periods: int = 30,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Get forecast predictions from a trained model."""
+    try:
+        import sys
+        sys.path.append(str(Path(__file__).parent.parent))
+        from src.services.ml_service.infrastructure.forecast_engine import ProphetForecaster
+        from src.services.ml_service.infrastructure.model_storage import ModelStorage
+        
+        # Load model
+        storage = ModelStorage()
+        model_path = storage.get_model_path(model_id, "prophet")
+        
+        if not model_path.exists():
+            raise HTTPException(status_code=404, detail="Model not found")
+        
+        forecaster = ProphetForecaster()
+        forecaster.load_model(str(model_path))
+        
+        # Generate predictions
+        forecast_df = forecaster.predict(periods=periods)
+        forecast_values = forecaster.get_forecast_values(future_only=True)
+        
+        # Get model metrics from database
+        conn = sqlite3.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("SELECT accuracy FROM ml_models WHERE id = ?", (model_id,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        metrics = {"r2_score": result[0] if result else 0.0}
+        
+        return ForecastPredictionResponse(
+            model_id=model_id,
+            forecast_dates=forecast_values['dates'][-periods:],
+            forecast_values=forecast_values['values'][-periods:],
+            lower_bound=forecast_values['lower_bound'][-periods:],
+            upper_bound=forecast_values['upper_bound'][-periods:],
+            components={
+                "trend": forecast_values.get('trend', [])[-periods:],
+                "weekly": forecast_values.get('weekly', [])[-periods:],
+                "yearly": forecast_values.get('yearly', [])[-periods:]
+            },
+            metrics=metrics
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting predictions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== END FORECASTING ENDPOINTS ====================
+
 
 if __name__ == "__main__":
     uvicorn.run(

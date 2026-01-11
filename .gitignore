@@ -177,8 +177,10 @@ logs/
 
 # Database
 *.db
+astralytiq.db
 *.sqlite
 *.sqlite3
+*.journal
 
 # OS generated files
 .DS_Store
