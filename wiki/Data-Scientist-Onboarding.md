@@ -5,7 +5,7 @@ Welcome to the AstralytiQ Data Science team! This guide will help you set up you
 ## 🛠️ Environment Setup
 
 1.  **Clone the Repo**:
-    `git clone https://github.com/Aisenh037/astralytiq.git`
+    `git clone https://github.com/Aisenh037/AstralytiQ.git`
 2.  **Install DS Stack**:
     `pip install -r requirements.txt` (Includes Prophet, Scikit-learn, Pandas)
 3.  **Local Data**:

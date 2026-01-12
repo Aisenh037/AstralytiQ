@@ -47,8 +47,8 @@
 ### 🏁 Production-Grade Local Setup
 ```bash
 # 1. Clone & Navigate
-git clone https://github.com/Aisenh037/sales-forecast-app.git
-cd sales-forecast-app
+git clone https://github.com/Aisenh037/AstralytiQ.git
+cd AstralytiQ
 
 # 2. Environment Configuration
 cp .env.example .env  # Update your keys
@@ -65,6 +65,11 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+### 📚 Examples & Demo Data
+Check out the [`examples/`](examples/) directory for sample datasets and usage guides.
+
+For detailed deployment options, see our **[Deployment Guide](DEPLOYMENT.md)**.
 
 ---
 

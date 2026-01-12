@@ -6,8 +6,8 @@ First off, thank you for considering contributing to AstralytiQ! It's people lik
 
 1. **Fork & Clone**:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/astralytiq.git
-   cd astralytiq
+   git clone https://github.com/YOUR_USERNAME/AstralytiQ.git
+   cd AstralytiQ
    ```
 
 2. **Environment Setup**:

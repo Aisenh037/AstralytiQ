@@ -171,6 +171,11 @@ data/
 *.pkl
 *.pickle
 
+# Allow examples
+!examples/
+!examples/*.csv
+!examples/*.json
+
 # Logs
 logs/
 *.log
