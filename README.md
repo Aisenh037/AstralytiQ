@@ -47,8 +47,8 @@
 ### 🏁 Production-Grade Local Setup
 ```bash
 # 1. Clone & Navigate
-git clone https://github.com/Aisenh037/astralytiq.git
-cd astralytiq
+git clone https://github.com/Aisenh037/sales-forecast-app.git
+cd sales-forecast-app
 
 # 2. Environment Configuration
 cp .env.example .env  # Update your keys
