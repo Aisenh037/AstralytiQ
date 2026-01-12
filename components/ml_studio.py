@@ -139,7 +139,28 @@ def track_training_progress(client, job_id):
         if status == 'completed':
             st.success("Training completed successfully!")
             st.balloons()
-            # In a real app, we'd invalidate cache here
+            
+            # Send notification
+            try:
+                from services.notification_service import get_notification_service
+                from backend_integration import get_current_user
+                
+                user = get_current_user()
+                if user and user.get('email'):
+                    notifier = get_notification_service()
+                    if notifier.enabled:
+                        metrics = status_data.get('metrics', {})
+                        notifier.send_training_complete_email(
+                            user['email'], 
+                            f"Forecast Model {job_id[:8]}", 
+                            metrics
+                        )
+                        st.toast("📧 Notification email sent!", icon="✉️")
+            except ImportError:
+                pass # Service might not be ready
+            except Exception as e:
+                print(f"Notification error: {e}")
+
             break
         elif status == 'failed':
             st.error("Training failed.")
